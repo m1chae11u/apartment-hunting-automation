@@ -1,0 +1,24 @@
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# HTML parsing
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# Geocoding + distance
+geopy>=2.4.0
+
+# Google Sheets
+gspread>=6.0.0
+google-auth>=2.28.0
+
+# Deduplication
+rapidfuzz>=3.6.0
+
+# HTTP API server (for n8n integration)
+fastapi>=0.110.0
+uvicorn>=0.27.0
+
+# Phase 2 (uncomment when ready):
+# playwright>=1.43.0
+# scraperapi-sdk>=2.0.0
