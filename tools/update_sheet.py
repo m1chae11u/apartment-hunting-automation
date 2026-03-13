@@ -11,6 +11,7 @@ Creates new neighborhood tabs if needed. Skips buildings already present.
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import gspread
@@ -31,6 +32,7 @@ HEADERS = [
     "NAME",
     "WEBSITE",
     "RENT/MO",
+    "DATE ADDED",
     "NOTES",
     "GOOGLE ⭐️ RATING (MAPS)",
     "Street View Vicinity Review/Concensus",
@@ -59,20 +61,23 @@ def ensure_tab(spreadsheet: gspread.Spreadsheet, tab_name: str) -> gspread.Works
         ws = spreadsheet.worksheet(tab_name)
     except gspread.exceptions.WorksheetNotFound:
         print(f"  Creating new tab: {tab_name}")
-        ws = spreadsheet.add_worksheet(title=tab_name, rows=200, cols=6)
+        ws = spreadsheet.add_worksheet(title=tab_name, rows=200, cols=len(HEADERS))
         # Write headers at row 4
-        ws.update(values=[HEADERS], range_name=f"A{HEADER_ROW}:F{HEADER_ROW}")
+        end_col = chr(ord("A") + len(HEADERS) - 1)
+        ws.update(values=[HEADERS], range_name=f"A{HEADER_ROW}:{end_col}{HEADER_ROW}")
         # Bold the header row
-        ws.format(f"A{HEADER_ROW}:F{HEADER_ROW}", {"textFormat": {"bold": True}})
+        ws.format(f"A{HEADER_ROW}:{end_col}{HEADER_ROW}", {"textFormat": {"bold": True}})
     return ws
 
 
 def building_to_row(building: dict) -> list:
     """Convert a grouped building to a row matching the sheet format."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return [
         building["name"],
         building.get("url", ""),
         building.get("price", ""),
+        today,
         "",  # NOTES — user fills this
         "",  # GOOGLE RATING — user fills this
         "",  # Street View — user fills this
