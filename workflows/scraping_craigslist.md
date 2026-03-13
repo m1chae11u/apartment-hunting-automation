@@ -2,7 +2,7 @@
 
 ## Overview
 
-Craigslist is the primary data source for Phase 1. The scraper fetches up to 3 paginated search result pages, then visits each listing's detail page to extract the full description and housing attributes. Everything lives in `tools/scrape_craigslist.py`.
+Craigslist is the primary data source. The scraper fetches up to 3 paginated search result pages, then visits each listing's detail page to extract the full description and housing attributes. Everything lives in `tools/scrape.py`.
 
 ---
 
@@ -130,7 +130,7 @@ This means coordinates and price from the structured data are never overwritten 
 Run the scraper in test mode (fetches only 5 listings):
 
 ```bash
-python tools/scrape_craigslist.py
+python tools/scrape.py
 ```
 
 Check the output:
@@ -150,7 +150,7 @@ cat .tmp/craigslist_raw.json | python -m json.tool | head -60
 - `lat` / `lon` are null for all listings
 - Zero listings returned despite the search URL working in a browser
 
-If structure has changed, compare the live HTML source of the search page against the selectors above and update `scrape_craigslist.py` accordingly.
+If structure has changed, compare the live HTML source of the search page against the selectors above and update `scrape.py` accordingly.
 
 ---
 

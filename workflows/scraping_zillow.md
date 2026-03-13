@@ -1,175 +1,127 @@
-# Zillow Scraping — SOP (Phase 2)
+# Zillow Scraping — SOP
 
-## Status
+## Overview
 
-Not yet active. This is a Phase 2 source, added when Craigslist inventory feels thin or we want broader market coverage. Implement after Phase 1 is stable and running.
-
----
-
-## Why Zillow Is Hard
-
-Zillow runs **PerimeterX** bot detection, one of the more aggressive anti-scraping systems in use. Symptoms you'll hit without mitigation:
-
-- HTTP 403 with a PerimeterX CAPTCHA page on the first request
-- Successful first request, then a CAPTCHA wall on the second
-- JavaScript-rendered blocking pages that return no listing data (just a challenge page)
-- IP bans after a small number of requests in a short window
-
-Unlike Craigslist, Zillow's defense is not just rate-limiting — it's active bot fingerprinting. Standard `requests` with a spoofed User-Agent will not work reliably. The page HTML also requires JavaScript execution to render listing data, so `requests` + `BeautifulSoup` alone is insufficient even without bot detection.
+Zillow listings are scraped via the **Apify** platform using the `maxcopell/zillow-scraper` actor. This avoids dealing with Zillow's aggressive PerimeterX bot detection directly. The scraper lives in `tools/scrape_zillow.py`.
 
 ---
 
-## Recommended Approach: ScraperAPI
+## How It Works
 
-[ScraperAPI](https://www.scraperapi.com) is a proxy service that handles bot detection, JavaScript rendering, and IP rotation on your behalf. You pass it a target URL and it returns the rendered HTML.
+1. The script builds a Zillow search URL with a `searchQueryState` JSON parameter encoding our filters (1BR, $2,500–$3,500, SF map bounds)
+2. It calls the Apify actor via the `apify-client` Python SDK
+3. The actor runs on Apify's infrastructure (handles proxies, browser rendering, bot detection)
+4. Results are fetched from the actor's dataset and normalized to our standard listing schema
+5. Output saved to `.tmp/zillow_raw.json`
 
-**Free tier**: 5,000 API credits/month. Each Zillow request costs 10 credits (JS rendering), so you get ~500 Zillow pages/month for free. That's plenty for twice-daily runs scraping a few pages at a time.
+---
 
-### Setup
+## Apify Configuration
 
-1. Sign up at `https://www.scraperapi.com`
-2. Get your API key from the dashboard
-3. Add to `.env`:
-   ```
-   SCRAPER_API_KEY=your_key_here
-   ```
+| Setting | Value |
+|---|---|
+| Actor | `maxcopell/zillow-scraper` |
+| Auth | `APIFY_API_TOKEN` in `.env` |
+| Extraction method | `PAGINATION` |
+| Cost | ~$0.01–0.05 per run (a few cents) |
 
-### How It Works
-
-ScraperAPI acts as a proxy. You pass your target URL as a query parameter to the ScraperAPI endpoint, along with your key and any options:
-
+The actor is called with:
 ```python
-import requests
-import os
-
-SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY")
-
-def scrape_with_scraperapi(target_url: str) -> str:
-    """Fetch target_url via ScraperAPI. Returns rendered HTML."""
-    params = {
-        "api_key": SCRAPER_API_KEY,
-        "url": target_url,
-        "render": "true",          # enable JavaScript rendering
-        "country_code": "us",      # US IP address
-        "premium": "true",         # use premium proxies (required for Zillow)
-    }
-    resp = requests.get("https://api.scraperapi.com/", params=params, timeout=60)
-    resp.raise_for_status()
-    return resp.text
+run_input = {
+    "searchUrls": [{"url": search_url}],
+    "extractionMethod": "PAGINATION",
+}
 ```
-
-**Important**: Set `render=true` (JS rendering) and `premium=true` for Zillow. Without `premium`, you'll still hit bot detection even through ScraperAPI. Premium requests cost more credits — check the ScraperAPI pricing page for current rates.
-
-Parse the returned HTML with BeautifulSoup exactly as you would with any other page. The response is the fully rendered DOM that a browser would see.
 
 ---
 
-## Zillow URL Structure for SF 1BR Rentals
+## Search Parameters
 
-```
-https://www.zillow.com/san-francisco-ca/rentals/?searchQueryState={"pagination":{},"isMapVisible":false,"mapBounds":{"west":-122.5155,"east":-122.3553,"south":37.7080,"north":37.8116},"filterState":{"fr":{"value":true},"fsba":{"value":false},"fsbo":{"value":false},"nc":{"value":false},"cmsn":{"value":false},"auc":{"value":false},"fore":{"value":false},"beds":{"min":1,"max":1},"price":{"min":2500,"max":3500},"mp":{"min":2500,"max":3500}},"isListVisible":true}
-```
+The search is constrained by a `searchQueryState` JSON object embedded in the URL:
 
-URL-encode the `searchQueryState` JSON before use. The map bounds are set to SF city limits roughly. Zillow paginates via `currentPage` inside the `searchQueryState` object.
+- **Map bounds**: Tight to the Caltrain corridor (~1mi around 4th & King and 22nd St stations)
+  - West: -122.4150, East: -122.3750
+  - South: 37.7430, North: 37.7900
+  - Covers: SoMa, South Beach, Mission Bay, Dogpatch, Potrero Hill
+- **Filters**: For rent, 1BR, $2,500–$3,500
+- **Excluded**: For sale, new construction sales, coming soon, auction, foreclosure
 
-Alternatively, start from the simpler base URL and let Zillow redirect to the full state URL:
-
-```
-https://www.zillow.com/san-francisco-ca/rentals/1-bedrooms/?price=2500-3500
-```
-
-**Inspect the actual URL** when navigating Zillow manually with your filters applied — copy that URL for the scraper. Zillow URL structures change over time.
+The tight map bounds avoid scraping irrelevant neighborhoods that `process.py` would filter out anyway, saving Apify credits.
 
 ---
 
-## Zillow Listing Data Extraction
+## Field Mapping
 
-Zillow embeds listing data in a `<script id="__NEXT_DATA__" type="application/json">` tag. This is the most reliable extraction path — it contains structured JSON with all listing fields, much like Craigslist's JSON-LD.
+Zillow's Apify output uses various field names. The normalizer tries multiple keys for each field:
 
-```python
-ld_tag = soup.find("script", {"id": "__NEXT_DATA__"})
-data = json.loads(ld_tag.string)
-# Navigate: data["props"]["pageProps"]["searchPageState"]["cat1"]["searchResults"]["listResults"]
-```
+| Our Schema | Zillow Keys (tried in order) |
+|---|---|
+| `url` | `detailUrl`, `url`, `link` (prepend `https://www.zillow.com` if relative) |
+| `price` | `unformattedPrice`, `hdpData.homeInfo.price`, `price` |
+| `address` | `address`, then assembled from `addressStreet` + `addressCity` + `addressState` + `addressZipcode` |
+| `bedrooms` | `beds`, `hdpData.homeInfo.bedrooms` |
+| `bathrooms` | `baths`, `hdpData.homeInfo.bathrooms` |
+| `sqft` | `area`, `hdpData.homeInfo.livingArea` (only if > 100) |
+| `lat/lon` | `latLong.latitude/longitude`, `hdpData.homeInfo.latitude/longitude` |
+| `neighborhood` | `hdpData.homeInfo.neighborhood`, `neighborhood` |
 
-The exact path within the JSON may change between Zillow deploys. If listings stop appearing, inspect `__NEXT_DATA__` in a browser's dev tools and re-map the path.
+### Known Missing Fields
 
-Fields to extract and map to the canonical schema:
-- `zpid` → use as basis for `listing_id` (hash or use directly)
-- `address` → `address_raw`
-- `price` → strip `$`, `/mo`, commas
-- `beds` → `bedrooms`
-- `baths` → `bathrooms`
-- `area` → `sqft`
-- `latLong.latitude` / `latLong.longitude` → `lat`, `lon`
-- `statusText`, `hdpData.homeInfo.description` → `description_full`
-- `detailUrl` → prepend `https://www.zillow.com` → `url`
+From testing (31 listings scraped):
+- **Neighborhood**: Missing on all listings (Zillow doesn't return it in search results)
+- **Price**: Missing on ~23% of listings (multi-unit buildings show ranges)
+- **Bathrooms**: Missing on ~23%
+- **Sqft**: Missing on ~39%
+
+These are expected gaps. The pipeline handles nulls gracefully — `process.py` uses lat/lon for distance filtering, not neighborhood.
 
 ---
 
-## Alternative: Playwright with Stealth
-
-If ScraperAPI credits run out or the service is unavailable, Playwright with `playwright-stealth` is a fallback. It's more complex to set up and has a higher failure rate, but it's free.
+## Running Standalone
 
 ```bash
-pip install playwright playwright-stealth
-playwright install chromium
+python tools/scrape_zillow.py
 ```
 
-```python
-from playwright.sync_api import sync_playwright
-from playwright_stealth import stealth_sync
-
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    page = browser.new_page()
-    stealth_sync(page)
-    page.goto("https://www.zillow.com/san-francisco-ca/rentals/...")
-    html = page.content()
-    browser.close()
+Output:
 ```
-
-**Known issues with Playwright approach**:
-- Zillow detects headless Chromium even with stealth patches — success rate is ~60–70%
-- CAPTCHA challenges may appear that pause the scrape
-- Slower than ScraperAPI (full browser launch per session)
-- Not suitable for high-frequency automated runs
-
-Use ScraperAPI as the primary approach. Fall back to Playwright only for manual one-off fetches.
+[INFO] Starting Zillow scrape: SF 1BR rentals $2500-$3500
+[INFO] Actor: maxcopell/zillow-scraper
+[INFO] Actor run finished with status: SUCCEEDED
+[INFO] Got N raw items from Apify
+[INFO] Normalized N listings from Zillow
+[INFO] Saved N listings → .tmp/zillow_raw.json
+```
 
 ---
 
-## Rate Limiting
+## Error Recovery
 
-Zillow is more sensitive than Craigslist. Recommended delays:
-- **3–5 seconds** between requests (even through ScraperAPI)
-- Maximum 50–100 listing pages per run to stay under ScraperAPI's credit budget
-- If you see a spike in failed requests, stop and wait several hours before retrying
+### Actor fails or times out
+- Check Apify dashboard at `https://console.apify.com` for run details
+- The actor may hit Zillow rate limits — usually resolves on retry
+- Pipeline continues without Zillow data (has `|| echo "[WARN]"` fallback in `run_pipeline.sh`)
+
+### `APIFY_API_TOKEN` not set
+- Script prints `[ERROR] APIFY_API_TOKEN not set in .env` and returns empty list
+- Add the token to `.env`: `APIFY_API_TOKEN=apify_api_...`
+
+### Actor returns 0 results
+- Zillow may have changed their page structure
+- Check if the actor has updates on Apify's marketplace
+- Try running the search URL manually in a browser to verify listings exist
 
 ---
 
-## Integration into Pipeline
+## Cost Management
 
-When ready to activate:
-
-1. Create `tools/scrape_zillow.py` following the same structure as `scrape_craigslist.py`:
-   - Returns a list of dicts matching the canonical `_empty_listing()` schema
-   - Implements `scrape_zillow(max_listings: int) -> list[dict]`
-   - Saves raw output to `.tmp/zillow_raw.json`
-
-2. In `tools/pipeline.py`, add Zillow to the scrape step:
-   ```python
-   if "zillow" in sources:
-       raw_zillow = scrape_zillow(max_listings)
-       all_listings.extend(raw_zillow)
-   ```
-
-3. Update the n8n HTTP call if sources need to be passed as a parameter, or hardcode `sources=["craigslist", "zillow"]` in `run_pipeline()`.
-
-4. Test with `python tools/scrape_zillow.py` before wiring into the pipeline.
+- Each actor run costs a few cents of Apify credit
+- With twice-daily runs, expect ~$1–3/month
+- Monitor usage at `https://console.apify.com/billing`
+- The free tier includes $5/month of platform credits
 
 ---
 
 ## Lessons Learned
 
-*(Fill this section in as issues are discovered. Include the date, what broke, what fixed it, and any changes made to the scraper, ScraperAPI config, or this workflow.)*
+- **2026-03-12**: Apartments.com Apify actor (`sovereigntaylor/apartments-scraper`) uses CheerioCrawler (HTTP-only), which gets 403-blocked by Apartments.com anti-bot. Even with residential proxies configured, the actor cannot bypass detection. Switched to Playwright-based scraping, but that also got IP-rate-limited after testing. Ultimately dropped Apartments.com automated scraping entirely. Zillow's Apify actor works because it uses a proper browser-based approach.
