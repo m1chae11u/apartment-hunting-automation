@@ -124,7 +124,10 @@ def apply_hard_filters(listings: list[dict]) -> tuple[list[dict], list[dict]]:
 
 
 def main():
-    raw_path = Path(__file__).parent.parent / ".tmp" / "craigslist_raw.json"
+    raw_path = Path(__file__).parent.parent / ".tmp" / "all_raw.json"
+    if not raw_path.exists():
+        # Fallback: if merge hasn't run, try craigslist-only
+        raw_path = Path(__file__).parent.parent / ".tmp" / "craigslist_raw.json"
     with open(raw_path) as f:
         listings = json.load(f)
 

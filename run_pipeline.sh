@@ -8,8 +8,14 @@ cd "$DIR"
 
 source .venv/bin/activate
 
-echo "=== Step 1: Scrape ==="
+echo "=== Step 1a: Scrape Craigslist ==="
 python tools/scrape.py
+
+echo "=== Step 1b: Scrape Zillow ==="
+python tools/scrape_zillow.py || echo "[WARN] Zillow scrape failed, continuing"
+
+echo "=== Step 1c: Merge Sources ==="
+python tools/merge_sources.py
 
 echo "=== Step 2: Hard Filters ==="
 python tools/process.py
