@@ -8,25 +8,22 @@ cd "$DIR"
 
 source .venv/bin/activate
 
-echo "=== Step 1a: Scrape Craigslist ==="
+echo "=== Step 1: Scrape Craigslist ==="
 python tools/scrape.py
 
-echo "=== Step 1b: Scrape Zillow ==="
-python tools/scrape_zillow.py || echo "[WARN] Zillow scrape failed, continuing"
-
-echo "=== Step 1c: Merge Sources ==="
+echo "=== Step 2: Merge Sources ==="
 python tools/merge_sources.py
 
-echo "=== Step 2: Hard Filters ==="
+echo "=== Step 3: Hard Filters ==="
 python tools/process.py
 
-echo "=== Step 3: Building Grouping ==="
+echo "=== Step 4: Building Grouping ==="
 python tools/group_buildings.py
 
-echo "=== Step 4: Update Sheet ==="
+echo "=== Step 5: Update Sheet ==="
 python tools/update_sheet.py
 
-echo "=== Step 5: Notify ==="
+echo "=== Step 6: Notify ==="
 python tools/notify.py
 
 echo "=== Pipeline complete ==="

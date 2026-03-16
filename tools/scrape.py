@@ -1,12 +1,12 @@
 """
 scrape.py — Scrape Craigslist apartments near Caltrain stations.
 
-Runs two geo-bounded searches (1mi radius around each station),
+Runs geo-bounded searches for each bedroom/price tier around each station,
 merges results, dedupes by listing ID, and saves to .tmp/craigslist_raw.json.
 
 Usage:
-    python tools/scrape.py              # default: up to 120 listings
-    python tools/scrape.py --max 50     # limit total listings
+    python tools/scrape.py              # default: up to 120 listings per tier
+    python tools/scrape.py --max 50     # limit total listings per tier
 """
 from __future__ import annotations
 
@@ -26,22 +26,22 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---------------------------------------------------------------------------
-# Config
+# Config — imported from central config.py
 # ---------------------------------------------------------------------------
 
-# Two Caltrain stations — search 1mi radius around each
-SEARCH_CENTERS = [
-    {"name": "4th_king", "lat": 37.7762, "lon": -122.3942},
-    {"name": "22nd_st",  "lat": 37.7575, "lon": -122.3922},
-]
-SEARCH_DISTANCE_MI = 1
+from config import SEARCHES, CALTRAIN_STATIONS, SEARCH_DISTANCE_MI
 
 BASE_URL = "https://sfbay.craigslist.org/search/sfc/apa"
-BASE_PARAMS = (
-    "?min_price=2500&max_price=3500"
-    "&min_bedrooms=1&max_bedrooms=1"
-    "&availabilityMode=0&sort=date"
-)
+
+
+def _build_params(search_tier: dict) -> str:
+    """Build CL query params for a given bedroom/price tier."""
+    br = search_tier["bedrooms"]
+    return (
+        f"?min_price={search_tier['min_price']}&max_price={search_tier['max_price']}"
+        f"&min_bedrooms={br}&max_bedrooms={br}"
+        f"&availabilityMode=0&sort=date"
+    )
 
 PAGE_SIZE = 120
 DEFAULT_MAX_LISTINGS = 120
@@ -105,7 +105,7 @@ def _empty_listing() -> dict:
         "title": None,
         "url": None,
         "price": None,
-        "bedrooms": 1.0,
+        "bedrooms": None,
         "bathrooms": None,
         "sqft": None,
         "address_raw": "",
@@ -123,10 +123,11 @@ def _empty_listing() -> dict:
 # Core scraping
 # ---------------------------------------------------------------------------
 
-def scrape_search_page(center: dict, start: int = 0) -> list[dict]:
-    """Fetch one page of geo-bounded CL search results."""
+def scrape_search_page(center: dict, search_tier: dict, start: int = 0) -> list[dict]:
+    """Fetch one page of geo-bounded CL search results for a bedroom/price tier."""
+    params = _build_params(search_tier)
     url = (
-        f"{BASE_URL}{BASE_PARAMS}"
+        f"{BASE_URL}{params}"
         f"&lat={center['lat']}&lon={center['lon']}"
         f"&search_distance={SEARCH_DISTANCE_MI}"
         f"&start={start}"
@@ -253,10 +254,16 @@ def scrape_listing_detail(url: str) -> dict:
         if crumbs:
             detail["neighborhood"] = crumbs[-1]
 
-    # Bathrooms / sqft
+    # Bedrooms / Bathrooms / sqft
     for span in soup.select(".attrgroup span"):
         text = span.get_text(strip=True).lower()
         if "br" in text and "ba" in text:
+            br_match = re.search(r"([\d.]+)\s*br", text)
+            if br_match:
+                try:
+                    detail["bedrooms"] = int(float(br_match.group(1)))
+                except ValueError:
+                    pass
             ba_match = re.search(r"([\d.]+)\s*ba", text)
             if ba_match:
                 try:
@@ -293,58 +300,66 @@ def scrape_listing_detail(url: str) -> dict:
 
 def scrape_craigslist(max_listings: int = DEFAULT_MAX_LISTINGS) -> list[dict]:
     """
-    Search around each Caltrain station, fetch details, merge and dedupe.
+    Search around each Caltrain station for each bedroom/price tier,
+    fetch details, merge and dedupe.
     """
     all_listings: list[dict] = []
     seen_ids: set[str] = set()
 
-    for center in SEARCH_CENTERS:
-        print(f"\n[INFO] Searching 1mi around {center['name']} ({center['lat']}, {center['lon']})")
+    for tier in SEARCHES:
+        br = tier["bedrooms"]
+        print(f"\n{'='*60}")
+        print(f"[INFO] Searching {br}BR (${tier['min_price']}-${tier['max_price']})")
+        print(f"{'='*60}")
 
-        partials = scrape_search_page(center, start=0)
-        print(f"[INFO] Found {len(partials)} results near {center['name']}")
+        for center in CALTRAIN_STATIONS:
+            print(f"\n[INFO] Searching 1mi around {center['name']} ({center['lat']}, {center['lon']})")
 
-        if not partials:
-            continue
+            partials = scrape_search_page(center, tier, start=0)
+            print(f"[INFO] Found {len(partials)} results near {center['name']}")
 
-        time.sleep(1)
-
-        for partial in partials:
-            if len(all_listings) >= max_listings:
-                break
-
-            lid = partial.get("listing_id")
-            if not lid or lid in seen_ids:
-                continue
-            seen_ids.add(lid)
-
-            listing_url = partial.get("url", "")
-            print(f"[INFO] Detail: {listing_url}")
-
-            try:
-                detail = scrape_listing_detail(listing_url)
-            except Exception as exc:
-                print(f"[WARN] Error on detail {listing_url}: {exc}")
-                detail = {}
-
-            if not detail and not partial.get("title"):
+            if not partials:
                 continue
 
-            # Merge — keep JSON-LD values over detail page values
-            for key, value in detail.items():
-                if key in partial and partial[key] is not None and partial[key] != "":
-                    continue
-                partial[key] = value
-
-            if not partial.get("title"):
-                partial["title"] = "(no title)"
-            if not partial.get("address_normalized") and partial.get("address_raw"):
-                partial["address_normalized"] = normalize_address(partial["address_raw"])
-
-            all_listings.append(partial)
             time.sleep(1)
 
-    print(f"\n[INFO] Total: {len(all_listings)} unique listings across {len(SEARCH_CENTERS)} stations")
+            for partial in partials:
+                lid = partial.get("listing_id")
+                if not lid or lid in seen_ids:
+                    continue
+                seen_ids.add(lid)
+
+                listing_url = partial.get("url", "")
+                print(f"[INFO] Detail: {listing_url}")
+
+                try:
+                    detail = scrape_listing_detail(listing_url)
+                except Exception as exc:
+                    print(f"[WARN] Error on detail {listing_url}: {exc}")
+                    detail = {}
+
+                if not detail and not partial.get("title"):
+                    continue
+
+                # Merge — keep JSON-LD values over detail page values
+                for key, value in detail.items():
+                    if key in partial and partial[key] is not None and partial[key] != "":
+                        continue
+                    partial[key] = value
+
+                # Fall back to search tier bedroom count if not parsed from detail
+                if partial.get("bedrooms") is None:
+                    partial["bedrooms"] = br
+
+                if not partial.get("title"):
+                    partial["title"] = "(no title)"
+                if not partial.get("address_normalized") and partial.get("address_raw"):
+                    partial["address_normalized"] = normalize_address(partial["address_raw"])
+
+                all_listings.append(partial)
+                time.sleep(1)
+
+    print(f"\n[INFO] Total: {len(all_listings)} unique listings across {len(SEARCHES)} tiers x {len(CALTRAIN_STATIONS)} stations")
     return all_listings
 
 

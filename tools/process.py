@@ -10,15 +10,12 @@ import re
 from pathlib import Path
 from geopy.distance import geodesic
 
-# Caltrain stations
-STATIONS = {
-    "4th_king": (37.7762, -122.3942),
-    "22nd_st": (37.7575, -122.3922),
-}
+from config import CALTRAIN_STATIONS, MAX_CALTRAIN_MI, SEARCHES
 
-# Hard filter thresholds
-MAX_PRICE = 3500
-MAX_CALTRAIN_MI = 1.0
+# Build stations dict and bedroom-aware price limits from config
+STATIONS = {s["name"]: (s["lat"], s["lon"]) for s in CALTRAIN_STATIONS}
+PRICE_BY_BEDROOMS = {s["bedrooms"]: s["max_price"] for s in SEARCHES}
+DEFAULT_MAX_PRICE = max(s["max_price"] for s in SEARCHES)
 
 
 def calc_caltrain_distance(lat: float, lon: float) -> dict:
@@ -86,10 +83,12 @@ def apply_hard_filters(listings: list[dict]) -> tuple[list[dict], list[dict]]:
     for listing in listings:
         reasons = []
 
-        # 1. Price filter
+        # 1. Price filter (bedroom-aware)
         price = listing.get("price")
-        if price is not None and price > MAX_PRICE:
-            reasons.append(f"price ${price} > ${MAX_PRICE}")
+        bedrooms = listing.get("bedrooms")
+        max_price = PRICE_BY_BEDROOMS.get(bedrooms, DEFAULT_MAX_PRICE)
+        if price is not None and price > max_price:
+            reasons.append(f"price ${price} > ${max_price} ({bedrooms or '?'}BR)")
 
         # 2. Caltrain distance
         lat, lon = listing.get("lat"), listing.get("lon")
@@ -125,9 +124,6 @@ def apply_hard_filters(listings: list[dict]) -> tuple[list[dict], list[dict]]:
 
 def main():
     raw_path = Path(__file__).parent.parent / ".tmp" / "all_raw.json"
-    if not raw_path.exists():
-        # Fallback: if merge hasn't run, try craigslist-only
-        raw_path = Path(__file__).parent.parent / ".tmp" / "craigslist_raw.json"
     with open(raw_path) as f:
         listings = json.load(f)
 

@@ -1,8 +1,9 @@
 """
 merge_sources.py — Merge and deduplicate listings from all sources.
 
-Reads craigslist_raw.json and zillow_raw.json,
-deduplicates across sources, and outputs all_raw.json.
+Auto-discovers all *_raw.json files in .tmp/, deduplicates across sources,
+and outputs all_raw.json. Adding a new scraper is as simple as writing
+a new <source>_raw.json file.
 
 Dedup strategy:
   1. Exact URL match (same listing on same site)
@@ -20,10 +21,16 @@ from pathlib import Path
 
 TMP_DIR = Path(__file__).parent.parent / ".tmp"
 
-SOURCE_FILES = {
-    "craigslist": TMP_DIR / "craigslist_raw.json",
-    "zillow": TMP_DIR / "zillow_raw.json",
-}
+def _discover_sources() -> dict[str, Path]:
+    """Auto-discover all *_raw.json source files in .tmp/."""
+    sources = {}
+    for path in sorted(TMP_DIR.glob("*_raw.json")):
+        # Derive source name: craigslist_raw.json -> craigslist
+        name = path.stem.replace("_raw", "")
+        if name == "all":
+            continue  # skip our own output
+        sources[name] = path
+    return sources
 
 OUTPUT_PATH = TMP_DIR / "all_raw.json"
 
@@ -150,7 +157,17 @@ def main():
     all_listings: list[dict] = []
     source_counts: dict[str, int] = {}
 
-    for source_name, path in SOURCE_FILES.items():
+    source_files = _discover_sources()
+    if not source_files:
+        print("[WARN] No *_raw.json source files found in .tmp/")
+        OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(OUTPUT_PATH, "w") as f:
+            json.dump([], f)
+        return
+
+    print(f"[INFO] Discovered sources: {list(source_files.keys())}")
+
+    for source_name, path in source_files.items():
         listings = load_source(source_name, path)
         source_counts[source_name] = len(listings)
         all_listings.extend(listings)

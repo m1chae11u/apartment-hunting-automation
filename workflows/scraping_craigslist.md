@@ -6,19 +6,29 @@ Craigslist is the primary data source. The scraper fetches up to 3 paginated sea
 
 ---
 
-## Target URL
+## Target URLs
 
+The scraper runs separate searches for each bedroom/price tier defined in `tools/config.py`:
+
+**1BR search:**
 ```
-https://sfbay.craigslist.org/search/sfc/apa?min_price=2500&max_price=3500&min_bedrooms=1&max_bedrooms=1&availabilityMode=0&sort=date
+https://sfbay.craigslist.org/search/sfc/apa?min_price=2500&max_price=3000&min_bedrooms=1&max_bedrooms=1&availabilityMode=0&sort=date
 ```
+
+**2BR search:**
+```
+https://sfbay.craigslist.org/search/sfc/apa?min_price=3500&max_price=5000&min_bedrooms=2&max_bedrooms=2&availabilityMode=0&sort=date
+```
+
+Each URL is also parameterized with `&lat=...&lon=...&search_distance=1` for each Caltrain station, resulting in 4 search pages total (2 tiers x 2 stations).
 
 Pagination appends `&start=0`, `&start=120`, `&start=240` (120 results per page, Craigslist default).
 
 **Path breakdown**:
 - `/sfc/` — San Francisco city only (not greater Bay Area)
 - `/apa` — Apartments section
-- `min_price` / `max_price` — server-side price filter
-- `min_bedrooms=1&max_bedrooms=1` — 1BR only
+- `min_price` / `max_price` — server-side price filter (tier-specific)
+- `min_bedrooms` / `max_bedrooms` — tier-specific (1 or 2)
 - `sort=date` — newest first, so we see new listings quickly
 
 ---

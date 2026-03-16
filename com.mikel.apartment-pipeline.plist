@@ -7,11 +7,11 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/arrodes/Documents/apartment-hunting-automation/run_pipeline.sh</string>
+        <string>/Users/mikel/Documents/automations/apartment-hunting/run_pipeline.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/arrodes/Documents/apartment-hunting-automation</string>
+    <string>/Users/mikel/Documents/automations/apartment-hunting</string>
 
     <key>StartCalendarInterval</key>
     <array>
@@ -36,9 +36,9 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/arrodes/Documents/apartment-hunting-automation/.tmp/pipeline.log</string>
+    <string>/Users/mikel/Documents/automations/apartment-hunting/.tmp/pipeline.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/arrodes/Documents/apartment-hunting-automation/.tmp/pipeline.err</string>
+    <string>/Users/mikel/Documents/automations/apartment-hunting/.tmp/pipeline.err</string>
 </dict>
 </plist>

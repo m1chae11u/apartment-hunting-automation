@@ -32,6 +32,7 @@ HEADERS = [
     "NAME",
     "WEBSITE",
     "RENT/MO",
+    "BEDROOMS",
     "DATE ADDED",
     "NOTES",
     "GOOGLE ⭐️ RATING (MAPS)",
@@ -56,17 +57,23 @@ def get_existing_names(worksheet: gspread.Worksheet) -> set[str]:
 
 
 def ensure_tab(spreadsheet: gspread.Spreadsheet, tab_name: str) -> gspread.Worksheet:
-    """Get or create a neighborhood tab with the correct headers."""
-    try:
-        ws = spreadsheet.worksheet(tab_name)
-    except gspread.exceptions.WorksheetNotFound:
-        print(f"  Creating new tab: {tab_name}")
-        ws = spreadsheet.add_worksheet(title=tab_name, rows=200, cols=len(HEADERS))
-        # Write headers at row 4
-        end_col = chr(ord("A") + len(HEADERS) - 1)
-        ws.update(values=[HEADERS], range_name=f"A{HEADER_ROW}:{end_col}{HEADER_ROW}")
-        # Bold the header row
-        ws.format(f"A{HEADER_ROW}:{end_col}{HEADER_ROW}", {"textFormat": {"bold": True}})
+    """Get or create a neighborhood tab with the correct headers.
+
+    Handles case-insensitive matching (e.g. existing 'SoMA' matches requested 'SoMa').
+    """
+    # Case-insensitive search across all existing worksheets
+    for ws in spreadsheet.worksheets():
+        if ws.title.lower() == tab_name.lower():
+            return ws
+
+    # Tab doesn't exist — create it
+    print(f"  Creating new tab: {tab_name}")
+    ws = spreadsheet.add_worksheet(title=tab_name, rows=200, cols=len(HEADERS))
+    # Write headers at row 4
+    end_col = chr(ord("A") + len(HEADERS) - 1)
+    ws.update(values=[HEADERS], range_name=f"A{HEADER_ROW}:{end_col}{HEADER_ROW}")
+    # Bold the header row
+    ws.format(f"A{HEADER_ROW}:{end_col}{HEADER_ROW}", {"textFormat": {"bold": True}})
     return ws
 
 
@@ -77,6 +84,7 @@ def building_to_row(building: dict) -> list:
         building["name"],
         building.get("url", ""),
         building.get("price", ""),
+        building.get("bedrooms", ""),
         today,
         "",  # NOTES — user fills this
         "",  # GOOGLE RATING — user fills this
@@ -119,12 +127,16 @@ def main():
                 total_added += 1
 
         if rows_to_add:
-            # Find next empty row after existing data
-            all_values = ws.col_values(1)
-            next_row = max(len(all_values) + 1, DATA_START_ROW)
-            end_col = chr(ord("A") + len(HEADERS) - 1)
-            cell_range = f"A{next_row}:{end_col}{next_row + len(rows_to_add) - 1}"
-            ws.update(values=rows_to_add, range_name=cell_range)
+            try:
+                # Find next empty row after existing data
+                all_values = ws.col_values(1)
+                next_row = max(len(all_values) + 1, DATA_START_ROW)
+                end_col = chr(ord("A") + len(HEADERS) - 1)
+                cell_range = f"A{next_row}:{end_col}{next_row + len(rows_to_add) - 1}"
+                ws.update(values=rows_to_add, range_name=cell_range)
+            except Exception as exc:
+                print(f"  ERROR writing to sheet tab '{hood}': {exc}")
+                total_added -= len(rows_to_add)
 
     print(f"\n=== DONE ===")
     print(f"Added: {total_added}")

@@ -12,31 +12,23 @@ import json
 import subprocess
 from pathlib import Path
 
-TMP_DIR = Path(__file__).parent.parent / ".tmp"
+from config import VALID_NEIGHBORHOODS
 
-# Valid neighborhood tabs in the Google Sheet
-VALID_NEIGHBORHOODS = [
-    "Mission Bay",
-    "Design District",
-    "SoMA",
-    "South Beach",
-    "Potrero Hill",
-    "Dogpatch",
-    "Mission",
-]
+TMP_DIR = Path(__file__).parent.parent / ".tmp"
 
 PROMPT_TEMPLATE = """You are classifying apartment listings for a San Francisco apartment search.
 
 For each listing below, extract:
 1. **building_name**: The actual building/complex name if mentioned (e.g. "The Beacon", "Soma Residences"). If no building name is evident, use the street address.
 2. **neighborhood**: Which SF neighborhood this is in. Must be one of: {neighborhoods}
+   If a listing does not fall within any of these neighborhoods, assign neighborhood as "Other".
 
 If two or more listings are from the same building (same address), they should get the same building_name.
 
 Return ONLY valid JSON — an array of objects with these fields:
 - listing_id: (from input)
 - building_name: string
-- neighborhood: string (must be one of the valid options above)
+- neighborhood: string (one of the valid options above, or "Other")
 
 Here are the listings:
 
@@ -53,6 +45,7 @@ def build_prompt(listings: list[dict]) -> str:
             "address_raw": l.get("address_raw", ""),
             "description_snippet": (l.get("description_full", "") or "")[:500],
             "price": l.get("price"),
+            "bedrooms": l.get("bedrooms"),
             "url": l.get("url", ""),
         })
 
@@ -95,6 +88,7 @@ def group_into_buildings(listings: list[dict], classifications: list[dict]) -> l
 
     # Group listings by building_name
     buildings: dict[str, dict] = {}
+    skipped_other = 0
     for listing in listings:
         lid = listing["listing_id"]
         cls = cls_by_id.get(lid)
@@ -102,7 +96,14 @@ def group_into_buildings(listings: list[dict], classifications: list[dict]) -> l
             print(f"  WARNING: no classification for listing {lid}, skipping")
             continue
 
+        # Reject listings outside valid neighborhoods
+        if cls["neighborhood"] == "Other":
+            print(f"  SKIP (outside target neighborhoods): {listing.get('address_raw', lid)}")
+            skipped_other += 1
+            continue
+
         bname = cls["building_name"]
+        br = listing.get("bedrooms")
         if bname not in buildings:
             # First listing for this building — use its data
             price = listing.get("price")
@@ -111,12 +112,22 @@ def group_into_buildings(listings: list[dict], classifications: list[dict]) -> l
                 "neighborhood": cls["neighborhood"],
                 "address": listing.get("address_raw", ""),
                 "price": f"${price:,}" if price else "",
+                "bedrooms": str(int(br)) if br else "?",
                 "url": listing.get("url", ""),
                 "caltrain": f"{listing.get('nearest_caltrain_mi', '?')}mi to {listing.get('nearest_station', '?')}",
                 "listings": 1,
             }
         else:
             buildings[bname]["listings"] += 1
+            # Aggregate bedroom types (e.g. "1, 2")
+            if br:
+                existing_br = buildings[bname].get("bedrooms", "")
+                br_str = str(int(br))
+                if br_str not in existing_br:
+                    buildings[bname]["bedrooms"] = f"{existing_br}, {br_str}" if existing_br and existing_br != "?" else br_str
+
+    if skipped_other:
+        print(f"  Filtered out {skipped_other} listing(s) outside target neighborhoods")
 
     return list(buildings.values())
 
